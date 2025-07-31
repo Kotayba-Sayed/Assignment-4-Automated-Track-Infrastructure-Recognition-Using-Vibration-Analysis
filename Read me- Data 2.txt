@@ -1,0 +1,1 @@
+In each folder, these files contain vibration data from sensor 1 (CH1_ACCEL1Z1), vibration data from sensor 2 (CH2_ACCEL1Z2), latitude (GPS.latitude), longitude (GPS.longitude), and speed (GPS.speed), while also logging the number of connected satellites (GPS.satellites) to assess data quality.
