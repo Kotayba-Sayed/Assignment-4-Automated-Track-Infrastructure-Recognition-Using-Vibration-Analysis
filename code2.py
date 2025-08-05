@@ -7,6 +7,7 @@ import dash
 from dash import dcc, html, Input, Output
 import tkinter as tk
 from tkinter import filedialog
+from geopy.distance import geodesic
 
 # ----------------------------------------
 # Load CSV files using file dialog (Tkinter)
@@ -50,6 +51,42 @@ else:
     print("[ERROR] Latitude or Longitude data missing.")
 
 # ----------------------------------------
+# Load Infrastructure Coordinates
+# ----------------------------------------
+infra_files = {
+    "Bridge": "converted_coordinates_Resultat_Bridge.csv",
+    "RailJoint": "converted_coordinates_Resultat_RailJoint.csv",
+    "Turnout": "converted_coordinates_Turnout.csv"
+}
+
+infra_points = []
+for label, path in infra_files.items():
+    df = pd.read_csv(path)
+    df.columns = df.columns.str.strip()
+    df = df[["Latitude", "Longitude"]].dropna()
+    df["Category"] = label
+    infra_points.append(df)
+
+df_infra = pd.concat(infra_points, ignore_index=True)
+
+# ----------------------------------------
+# Label GPS points based on proximity to infrastructure
+# ----------------------------------------
+def classify_gps_point(lat, lon, infra_df, threshold_meters=15):
+    for _, row in infra_df.iterrows():
+        distance = geodesic((lat, lon), (row["Latitude"], row["Longitude"])).meters
+        if distance <= threshold_meters:
+            return row["Category"]
+    return "Other"
+
+df_gps["Label"] = df_gps.apply(
+    lambda row: classify_gps_point(row["Latitude"], row["Longitude"], df_infra), axis=1
+)
+
+print("\n[INFO] GPS Point Labels Distribution:")
+print(df_gps["Label"].value_counts())
+
+# ----------------------------------------
 # Vibration segmentation
 # ----------------------------------------
 dt = 0.002
@@ -69,6 +106,17 @@ else:
     print("[ERROR] Missing vibration data for segmentation.")
 
 # ----------------------------------------
+# Label vibration segments using GPS labels
+# ----------------------------------------
+if not df_gps.empty and vib_segments.size > 0:
+    gps_labels = df_gps["Label"].tolist()
+    segment_labels = gps_labels[:len(vib_segments)]
+    print("\n[INFO] Vibration Segment Labels Distribution:")
+    print(pd.Series(segment_labels).value_counts())
+else:
+    segment_labels = []
+
+# ----------------------------------------
 # Plotly Map Creation
 # ----------------------------------------
 if not df_gps.empty:
@@ -76,16 +124,16 @@ if not df_gps.empty:
         df_gps,
         lat="Latitude",
         lon="Longitude",
-        custom_data=["PointIndex"],
+        custom_data=["PointIndex", "Label"],
+        color="Label",
         zoom=10,
-        title="GPS Coordinates Map"
+        title="GPS Coordinates Map (Labelled)"
     )
     gps_fig.update_layout(mapbox_style="open-street-map", height=600)
 else:
     gps_fig = go.Figure()
     gps_fig.update_layout(title="No GPS Data Available", height=600)
-
-
+    
 empty_vib_fig = go.Figure()
 empty_vib_fig.update_layout(title="Vibration Signal", xaxis_title="Time (s)", yaxis_title="Acceleration")
 
@@ -96,7 +144,7 @@ app = dash.Dash(__name__)
 app.title = "Vibration Viewer"
 
 app.layout = html.Div([
-    html.H2("Interactive GPS and Vibration Visualization"),
+    html.H2("Interactive GPS and Vibration Visualization (Labelled)"),
     html.Div([
         dcc.Graph(id="gps-map", figure=gps_fig)
     ], style={'width': '48%', 'display': 'inline-block', 'vertical-align': 'top'}),
@@ -117,7 +165,8 @@ def update_vibration(clickData):
         return empty_vib_fig
 
     index = clickData['points'][0]['customdata'][0]
-    index = min(index, vib_segments.shape[0] - 1) 
+    label = clickData['points'][0]['customdata'][1]
+    index = min(index, vib_segments.shape[0] - 1)
     segment = vib_segments[index]
 
     t = np.arange(segment_len) * dt
@@ -125,7 +174,7 @@ def update_vibration(clickData):
     fig.add_trace(go.Scatter(x=t, y=segment[:, 0], mode="lines", name="Vibration 1"))
     fig.add_trace(go.Scatter(x=t, y=segment[:, 1], mode="lines", name="Vibration 2"))
     fig.update_layout(
-        title=f"Vibration Data for GPS Point {index}",
+        title=f"Vibration Data for GPS Point {index} (Label: {label})",
         xaxis_title="Time (s)",
         yaxis_title="Acceleration"
     )
@@ -135,4 +184,4 @@ def update_vibration(clickData):
 # Run server
 # ----------------------------------------
 if __name__ == "__main__":
-    app.run(debug=True, port=8060)
+    app.run(debug=True, port=8060, use_reloader=False)
